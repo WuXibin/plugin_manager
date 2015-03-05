@@ -17,8 +17,9 @@
 #include <vector>
 #include <map>
 
-#include <sharelib/pluginmanager/iplugin.h>
-#include <sharelib/pluginmanager/plugin_manager.h>
+#include "pluginmanager/iplugin.h"
+#include "pluginmanager/plugin_config.h"
+#include "pluginmanager/plugin_manager.h"
 
 
 namespace ngx_handler{
@@ -31,7 +32,7 @@ class Handler {
         ~Handler();
 
         // Init handler config;
-        int Init(const STR_MAP& config_map);
+        int Init(const std::string& config_file);
 
         // Init work process.
         int InitProcess();
@@ -40,11 +41,13 @@ class Handler {
         void Destroy();
 
         // handle one request
-        int Handle(const STR_MAP& query_map,STR_MAP& kv_out, std::string& result);
+        int Handle(sharelib::IPluginCtx *ctx);
+
+        int PostSubHandle(sharelib::IPluginCtx *ctx);
 
     private:
         sharelib::PluginManager* plugin_manager_;
-        STR_MAP config_map_;
+        std::string config_file_;
 };
 
 }

@@ -1,7 +1,6 @@
 #include "ngx_handler.h"
 #include "ngx_handler_interface.h"
 #include "ngx_http_adfront_module.h"
-#include <sharelib/pluginmanager/http_request_define.h>
 
 #include <stdint.h>
 #include <string>
@@ -9,8 +8,7 @@
 
 using namespace std;
 using namespace ngx_handler;
-
-#define PLUGIN_MANAGER_HOME_PATH "__plugin_manager_home_path__"
+using namespace sharelib;
 
 static string ngx_http_get_cookie(ngx_http_request_t *r);
 static string ngx_http_get_forward(ngx_http_request_t* r);
@@ -23,20 +21,15 @@ static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map)
 int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *const delims);
 static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map);
 
-static ngx_http_request_t *cur_request;
 
-void *plugin_create_handler(void *config_file, ngx_int_t len) {
-    STR_MAP config_map;
-    
+void *plugin_create_handler(char *config_file, size_t len) {
     Handler *request_handler = new Handler();
     if(request_handler == NULL) {
         return NULL;
     }
 
-    string plugin_conf_file = string((char*)config_file, len);
-    config_map[PLUGIN_MANAGER_HOME_PATH] = plugin_conf_file;
-
-    request_handler->Init(config_map);
+    string conf_file = string(config_file, len);
+    request_handler->Init(conf_file);
 
     return request_handler;
 }
@@ -62,41 +55,54 @@ ngx_int_t plugin_init_handler(void *request_handler) {
 
 
 ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t* r) {
-    ngx_int_t   rc;
     ngx_buf_t   *b;
+    subrequest_t *st;
     ngx_http_adfront_ctx_t *ctx;
 
-    string      result;
-    STR_MAP     *query_map;
-    STR_MAP     kv_out;
-
-    if (request_handler == NULL) {
-        return -1; 
+    if(request_handler == NULL) {
+        return NGX_ERROR; 
     }
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module); 
-    ctx->handle_map = new STR_MAP();
-    query_map = (STR_MAP *)ctx->handle_map;
+    IPluginCtx *plugin_ctx = new IPluginCtx;
 
-    ngx_header_handler(r, *query_map);
-    ngx_do_get_post_body(r, *query_map);
+    ngx_header_handler(r, plugin_ctx->headers_in_);
+    ngx_do_get_post_body(r, plugin_ctx->headers_in_);
     
-    ngx_query_map_print(r, *query_map);
+    ngx_query_map_print(r, plugin_ctx->headers_in_);
 
-    rc = ((Handler *)request_handler)->Handle(*query_map, kv_out, result);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    ctx->plugin_ctx = plugin_ctx;
 
-    if(rc == NGX_OK) {
-        b = ngx_create_temp_buf(r->pool, result.length()); 
+    int rc = ((Handler *)request_handler)->Handle(plugin_ctx);
+
+    if(rc == PLUGIN_AGAIN) {
+        if(plugin_ctx->subrequest_uri_.empty()) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "[adfront] plugin return again without subrequest uri");
+            
+            return NGX_ERROR;
+        }
+
+        return plugin_start_subrequest(r);
+    }
+
+
+    //rc = PLUGIN_DONE
+    if(!plugin_ctx->handle_result_.empty()) {
+        b = ngx_create_temp_buf(r->pool, plugin_ctx->handle_result_.length()); 
         if(b == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        ngx_memcpy(b->pos, result.c_str(), result.length());
-        b->last = b->pos + result.length();
+        ngx_memcpy(b->pos, plugin_ctx->handle_result_.c_str(), 
+                plugin_ctx->handle_result_.length());
+        b->last = b->pos + plugin_ctx->handle_result_.length();
         b->last_buf = 1;
+
+        ctx->plugin_res = b;
     }
 
-    return rc; 
+    return NGX_OK;
 }
 
 // Get cookie string from nginx request struct.
@@ -375,3 +381,83 @@ static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map)
     return RET_OK;
 }
 
+ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
+    ngx_http_adfront_ctx_t *ctx;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    IPluginCtx *plugin_ctx = ctx->plugin_ctx;
+
+    for(size_t i = 0; i < plugin_ctx->subrequest_uri_.size(); i++) {
+        string url = plugin_ctx->subrequest_uri_[i]; 
+        size_t pos = url.find('?'); 
+
+        if(pos == string::npos) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                    "[adfront] invalid subrequest uri %s", url.c_str());
+            
+            return NGX_ERROR;
+        }
+
+        string str_uri = url.substr(0, pos);
+        string str_args = url.substr(pos + 1);
+        
+        ngx_str_t uri = ngx_string(str_uri.c_str());
+        ngx_str_t args = ngx_string(str_args.c_str());
+
+        st = ngx_array_push(ctx->subrequests); 
+        if(st == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        st->uri.data = ngx_pcalloc(r->pool, uri.len);
+        if(st->uri == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+        ngx_memcpy(st->uri.data, uri.data, uri.len); 
+        st->uri.len = uri.len;
+        
+        st->args.data = ngx_pcalloc(r->pool, args.len);
+        if(st->uri == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+        ngx_memcpy(st->args.data, args.data, args.len); 
+        st->args.len = args.len;
+    }
+    
+    size_t n = ctx->subrequests->nelts;
+    subrequest_t *st = ctx->subrequests->elts;
+    ngx_http_post_subrequest_t *psr;
+
+    for(size_t i = 0; i < n; i++, st++) {
+        int flags = NGX_HTTP_SUBREQUEST_IN_MEMORY | NGX_HTTP_SUBREQUEST_WAITED;
+
+        psr = ngx_palloc(r->pool, sizeof(ngx_http_post_subrequest_t));
+        if(psr == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        psr->handler = plugin_subrequest_post_handler;
+        psr->data = NULL;
+
+        ngx_int_t rc = ngx_http_subrequest(r, &st->uri, &st->args, 
+                &st->subr, psr, flags);
+
+        if(rc != NGX_OK) 
+            return NGX_ERROR;
+    }
+
+    return NGX_AGAIN;
+}
+
+
+static ngx_int_t
+plugin_subrequest_post_handler(ngx_http_request_t *r, void *data, ngx_int_t rc) {
+    r->parent->write_event_handler = ngx_http_core_run_phases;
+
+    return NGX_OK;
+}
+
+
+ngx_int_t plugin_destroy_ctx(ngx_http_regex_t *r) {
+     
+}

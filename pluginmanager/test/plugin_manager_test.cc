@@ -12,6 +12,7 @@ int main() {
 
     plugin_manager.Init("plugin_manager.conf"); 
 
+    //new request comming ...
     IPlugin *plugin = plugin_manager.GetPlugin("deliver");
     
     IPluginCtx *ctx = new IPluginCtx(); 
@@ -22,6 +23,8 @@ int main() {
 
 
     cout << "result: " << ctx->handle_result() << endl;
+
+    delete ctx;
 
     return 0;
 }

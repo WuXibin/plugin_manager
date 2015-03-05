@@ -140,9 +140,8 @@ static ngx_int_t ngx_http_adfront_handler(ngx_http_request_t *r) {
         /*
          * set by ngx_pcalloc():
          *
-         *  ctx->handle_result = NULL;
-         *  ctx->handle_map = NULL;
-         *  ctx->handle_ctx = NULL;
+         *  ctx->plugin_ctx = NULL;
+         *  ctx->plugin_res = NULL;
          */
 
         ngx_http_set_ctx(r, ctx, ngx_http_adfront_module);

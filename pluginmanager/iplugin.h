@@ -22,33 +22,6 @@ class HandleBaseCtx {
 //Store plugin centext for every http request
 class IPluginCtx {
     public:
-        HandleBaseCtx *handle_ctx() { return handle_ctx_.get(); }
-        void set_handle_ctx(HandleBaseCtx *ctx) { handle_ctx_.reset(ctx); }
-        
-        const STR_MAP& headers_in() const { return headers_in_; }
-        const STR_MAP& headers_out() const { return headers_out_; }
-        
-        const std::vector<std::string>& subrequest_uri() const { return subrequest_uri_; }
-        const std::vector<std::string>& subrequest_res() const { return subrequest_res_; }
-
-        void AddSubrequest(const std::string& uri) { 
-            subrequest_uri_.push_back(uri); 
-        }
-
-        void AddHeadersIn(const std::string& key, const std::string& val) { 
-            headers_in_[key] = val;
-        }
-
-        void AddHeadersOut(const std::string& key, const std::string& val) { 
-            headers_out_[key] = val;
-        }
-        
-        const std::string& handle_result() const { return handle_result_; }
-        void set_handle_result(const std::string& result) {
-            handle_result_ = result;
-        }
-
-    private:
         std::auto_ptr<HandleBaseCtx> handle_ctx_; 
          
         STR_MAP headers_in_;
@@ -69,9 +42,13 @@ class IPlugin {
 
         virtual int Destroy() = 0;
 
+        /*
+         * PLUGIN_DONE      Process request done, this are no subrequests.
+         * PLUGIN_AGAIN     There are subrequest to be processed
+         */
         virtual int Handle(IPluginCtx *ctx) = 0;
 
-        virtual int PostSubrequestHandle(IPluginCtx *ctx) { 
+        virtual int PostSubHandle(IPluginCtx *ctx) { 
             (void)ctx;      //avoid compiler complain
             return 0; 
         }
