@@ -16,12 +16,18 @@ static string ngx_http_get_referer(ngx_http_request_t* r);
 static string ngx_http_get_user_agent(ngx_http_request_t* r);
 static string ngx_http_get_ip(ngx_http_request_t* r);
 
+static int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *delims);
+
+static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map);
 static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map);
 static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map);
-int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *const delims);
-static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map);
+
+static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r);
+static ngx_int_t plugin_create_ctx(ngx_http_request_t *r);
+static void plugin_destroy_ctx(ngx_http_request_t *r);
 
 
+/*------------------------------ handler api ---------------------------------*/
 void *plugin_create_handler(char *config_file, size_t len) {
     Handler *request_handler = new Handler();
     if(request_handler == NULL) {
@@ -35,6 +41,15 @@ void *plugin_create_handler(char *config_file, size_t len) {
 }
 
 
+ngx_int_t plugin_init_handler(void *request_handler) {
+    if(request_handler == NULL) {
+        return NGX_OK;
+    }
+
+    return ((Handler *)request_handler)->InitProcess();
+}
+
+
 void plugin_destroy_handler(void *request_handler) {
     if(request_handler != NULL) {
         ((Handler *)request_handler)->Destroy();
@@ -45,35 +60,31 @@ void plugin_destroy_handler(void *request_handler) {
 }
 
 
-ngx_int_t plugin_init_handler(void *request_handler) {
-    if(request_handler == NULL) {
-        return NGX_OK;
-    }
+/*--------------------------------- request api ------------------------------*/
 
-    return ((Handler *)request_handler)->InitProcess();
-}
-
-
+/*
+ * @return 
+ *      NGX_OK      plugin process request sucess   
+ *      NGX_AGAIN   plugin has subrequest to be processed
+ *      NGX_ERROR   plugin process reuquest fail
+ */
 ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t* r) {
-    ngx_buf_t   *b;
-    subrequest_t *st;
+    ngx_int_t rc;
     ngx_http_adfront_ctx_t *ctx;
 
-    if(request_handler == NULL) {
-        return NGX_ERROR; 
+    /* create context for each http request exactly once */
+    rc = plugin_create_ctx(r);
+    if(rc != NGX_OK) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] plugin create context error");
+
+        return NGX_ERROR;
     }
-
-    IPluginCtx *plugin_ctx = new IPluginCtx;
-
-    ngx_header_handler(r, plugin_ctx->headers_in_);
-    ngx_do_get_post_body(r, plugin_ctx->headers_in_);
-    
-    ngx_query_map_print(r, plugin_ctx->headers_in_);
-
+        
     ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
-    ctx->plugin_ctx = plugin_ctx;
+    IPluginCtx *plugin_ctx = (IPluginCtx *)ctx->plugin_ctx;
 
-    int rc = ((Handler *)request_handler)->Handle(plugin_ctx);
+    rc = ((Handler *)request_handler)->Handle(plugin_ctx);
 
     if(rc == PLUGIN_AGAIN) {
         if(plugin_ctx->subrequest_uri_.empty()) {
@@ -86,90 +97,208 @@ ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t* r) {
         return plugin_start_subrequest(r);
     }
 
+    /* assert(rc = PLUGIN_DONE) */
+    return NGX_OK;
+}
 
-    //rc = PLUGIN_DONE
-    if(!plugin_ctx->handle_result_.empty()) {
-        b = ngx_create_temp_buf(r->pool, plugin_ctx->handle_result_.length()); 
-        if(b == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
+/*
+ * @return 
+ *      NGX_OK          all subrequests have been done
+ *      NGX_AGAIN       some subrequests haven't been done
+ */
+ngx_int_t plugin_check_subrequest(ngx_http_request_t *r) {
+    size_t                  n;
+    ngx_buf_t               *b;
+    subrequest_t            *st;
+    ngx_http_adfront_ctx_t  *ctx;
 
-        ngx_memcpy(b->pos, plugin_ctx->handle_result_.c_str(), 
-                plugin_ctx->handle_result_.length());
-        b->last = b->pos + plugin_ctx->handle_result_.length();
-        b->last_buf = 1;
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    IPluginCtx *plugin_ctx = (IPluginCtx *)ctx->plugin_ctx;
 
-        ctx->plugin_res = b;
+    st = ctx->subrequests->elts; 
+    n = ctx->subrequests->nelts;
+    for(size_t i = 0; i < n; i++, st++) {
+        if(st->subr->done != 1) {
+            return NGX_AGAIN;
+        } 
+    }
+
+    plugin_ctx->handle_result_.clear();
+    st = ctx->subrequests->elts; 
+    for(size_t i = 0; i < n; i++) {
+        b = &st->subr->upstream->buffer; 
+
+        string res = string((char *)b->pos, b->last - b->pos); 
+        plugin_ctx->subrequest_res_.push_back(res); 
     }
 
     return NGX_OK;
 }
 
-// Get cookie string from nginx request struct.
-static string ngx_http_get_cookie(ngx_http_request_t *r)
-{
-    ngx_table_elt_t ** cookies = NULL;
+
+/*
+ * @return 
+ *      NGX_OK      plugin process request sucess   
+ *      NGX_AGAIN   plugin has subrequest to be processed
+ *      NGX_ERROR   plugin process reuquest fail
+ */
+ngx_int_t plugin_post_subrequest(void *request_handler, ngx_http_request_t *r) {
+    ngx_int_t rc;
+    ngx_http_adfront_ctx_t *ctx;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    IPluginCtx *plugin_ctx = (IPluginCtx *)ctx->plugin_ctx;
+
+    rc = ((Handler *)request_handler)->PostSubHandle(plugin_ctx);
+
+    if(rc == PLUGIN_AGAIN) {
+        if(plugin_ctx->subrequest_uri_.empty()) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "[adfront] plugin return again without subrequest uri");
+            
+            return NGX_ERROR;
+        }
+
+        return plugin_start_subrequest(r);
+    } 
+
+    /* assert(rc = PLUGIN_DONE) */
+    return NGX_OK;
+}
+
+
+/*
+ * @return 
+ *      NGX_OK          output filter body complete
+ *      NGX_AGAIN       output filter body incomplete
+ *      NGX_ERROR       plugin finalize request fail
+ */
+ngx_int_t plugin_finalize_request(ngx_http_request_t *r) {
+    ngx_int_t               rc;
+    ngx_buf_t               *b;
+    ngx_chain_t             out;
+    ngx_http_adfront_ctx_t  *ctx;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    IPluginCtx *plugin_ctx = (IPluginCtx *)ctx->plugin_ctx;
+    
+    if(plugin_ctx->handle_result_.empty()) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] plugin finalize with empty result");
+
+        plugin_destroy_ctx(r);
+        return NGX_ERROR;
+    }
+
+    b = ngx_create_temp_buf(r->pool, plugin_ctx->handle_result_.length()); 
+    if(b == NULL) {
+        plugin_destroy_ctx(r);
+        return NGX_ERROR;
+    }
+
+    ngx_memcpy(b->pos, plugin_ctx->handle_result_.c_str(), 
+            plugin_ctx->handle_result_.length());
+    b->last = b->pos + plugin_ctx->handle_result_.length();
+    b->last_buf = 1;
+
+    out.buf = b;
+    out.next = NULL;
+
+    if(r->headers_out.status != NGX_HTTP_MOVED_TEMPORARILY)
+       r->headers_out.status = NGX_HTTP_OK; 
+
+    ngx_str_t type = ngx_string("text/plain; charset=utf-8");
+    r->headers_out.content_type = type;
+    r->headers_out.content_length_n = plugin_ctx->handle_result_.length();
+
+    rc = ngx_http_send_header(r);
+    if(rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] send header fail");
+
+        plugin_destroy_ctx(r);
+        return NGX_ERROR;
+    }    
+
+    plugin_destroy_ctx(r);
+    return ngx_http_output_filter(r, &out);
+}
+
+void plugin_destroy_request(ngx_http_request_t *r) {
+    plugin_destroy_ctx(r); 
+}
+
+/*---------------------------- local function --------------------------------*/
+static string ngx_http_get_cookie(ngx_http_request_t *r) {
+    ngx_table_elt_t **cookies = NULL;
+
     ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0, 
         "Cookie count: %d\n", r->headers_in.cookies.nelts);
+
     cookies = (ngx_table_elt_t**)r->headers_in.cookies.elts;
+
     ngx_uint_t i = 0;
     for (i = 0; i < r->headers_in.cookies.nelts; i++) { 
         ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0,
             "Cookie line %d: %s\n", i, cookies[i]->value.data);
     }
-    if (r->headers_in.cookies.nelts > 0) {
-        return string((char*)cookies[0]->value.data, cookies[0]->value.len);
-    }
-    return "";
 
+    if (r->headers_in.cookies.nelts > 0) {
+        return string((char *)cookies[0]->value.data, cookies[0]->value.len);
+    }
+
+    return "";
 }
 
-static string ngx_http_get_forward(ngx_http_request_t* r)
-{
-    if (NULL == r->headers_in.x_forwarded_for){
+static string ngx_http_get_forward(ngx_http_request_t* r) {
+    if (NULL == r->headers_in.x_forwarded_for) {
         return "";
     }
+
     if (r->headers_in.x_forwarded_for->value.len > 0) {
-        return string((char*)r->headers_in.x_forwarded_for->value.data ,
+        return string((char *)r->headers_in.x_forwarded_for->value.data ,
             r->headers_in.x_forwarded_for->value.len);
     }
+
     return "";
 }
 
-static string ngx_http_get_referer(ngx_http_request_t* r)
-{
+static string ngx_http_get_referer(ngx_http_request_t* r) {
     if (NULL == r->headers_in.referer){
         return "";
     }
+
     if (r->headers_in.referer->value.len > 0) {
-        return string((char*)r->headers_in.referer->value.data ,
+        return string((char *)r->headers_in.referer->value.data ,
             r->headers_in.referer->value.len);
     }
+
     return "";
 }
 
 
-static string ngx_http_get_user_agent(ngx_http_request_t* r)
-{
+static string ngx_http_get_user_agent(ngx_http_request_t* r) {
     if (NULL == r->headers_in.user_agent) {
         return "";
     }
+
     if (r->headers_in.user_agent->value.len > 0) {
-        return string((char*)r->headers_in.user_agent->value.data ,
+        return string((char *)r->headers_in.user_agent->value.data ,
             r->headers_in.user_agent->value.len);
     }
+
     return "";
 }
 
-static string ngx_http_get_ip(ngx_http_request_t* r)
-{
+static string ngx_http_get_ip(ngx_http_request_t* r) {
     if (r->headers_in.x_forwarded_for == NULL) {
         if (r->headers_in.x_real_ip == NULL) {
-          //  ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "x_real_ip == NULL");
             if (r->connection->addr_text.len > 0) 
-                return string((char*)r->connection->addr_text.data, r->connection->addr_text.len);
+                return string((char*)r->connection->addr_text.data, 
+                        r->connection->addr_text.len);
             return "";
         }
+
         if (r->headers_in.x_real_ip->value.len > 0) {
             return string((char*)r->headers_in.x_real_ip->value.data ,
                 r->headers_in.x_real_ip->value.len);
@@ -177,88 +306,60 @@ static string ngx_http_get_ip(ngx_http_request_t* r)
     } else {
         ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,"x_forward_for : %s", 
                     (char*)r->headers_in.x_forwarded_for->value.data);
-        if (r->headers_in.x_forwarded_for->value.len >0) {
+
+        if (r->headers_in.x_forwarded_for->value.len > 0) {
             string forward_ip((char*)r->headers_in.x_forwarded_for->value.data, 
                                      r->headers_in.x_forwarded_for->value.len);
+
             std::size_t found = forward_ip.find(',');
-            if (found!=std::string::npos)
+            if (found != std::string::npos)
                 return string(forward_ip, 0, found);
-            else return forward_ip;
+            else 
+                return forward_ip;
         }
     }
+
     return "";
 }
 
-// This function process nginx request struct for post type.
-static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map)
-{
+
+static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map) {
     if (!(r->method & (NGX_HTTP_POST))) {
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,"HTTP Get request accepted");
-        return RET_OK;
-    }
-    size_t len = 0; //post data len   
-    u_char *buf = NULL, *p = NULL, *last = NULL; //post data pointer   
-    ngx_chain_t *cl;
-    if (r->request_body != NULL && r->request_body->bufs != NULL) {
-        for (cl = r->request_body->bufs; cl; cl = cl->next) {
-            if(ngx_buf_in_memory(cl->buf)){
-                len += cl->buf->last - cl->buf->pos;
-            }else{
-                len += cl->buf->file_last - cl->buf->file_pos;
-                ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
-                    "cl->buf->file_last - cl->buf->file_pos: %d", cl->buf->file_last - cl->buf->file_pos);
-            }	        
-        }
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "len: %d", len);
-        if (len > 0) {
-            buf = (u_char*)ngx_pcalloc(r->pool, len + 1);
-            if (buf == NULL) {
-                ngx_http_finalize_request(r, NGX_ERROR);
-                return RET_OK;
-            }
-            p = buf;
-            last = p + len; 
+        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+                "[adfront] http get request accepted");
 
-            for (cl = r->request_body->bufs; cl; cl = cl->next) {
-                if(ngx_buf_in_memory(cl->buf)){
-                    p = ngx_copy(p, cl->buf->pos, cl->buf->last - cl->buf->pos);
-                }else{
-                    if(NULL != cl->buf->file){
-                        if(0 > ngx_read_file(cl->buf->file, p, cl->buf->file_last - cl->buf->file_pos, cl->buf->file_pos)){
-                            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_read_file failed");
-                            return RET_OK;
-                        }						
-                        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "len: %lu", len);
-                    }					
-                }				
-            }
-        }
-    }	else {
-        return RET_OK;
+        return NGX_OK;
     }
-    query_map[HTTP_REQUEST_POST_BODY] = string((char*)buf);
-    return RET_OK;
+
+    
+    /* NGX_HTTP_POST */
+    //TODO
+    
+    return NGX_OK;
 }
 
-static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map)
-{
+
+static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map) {
     STR_MAP::const_iterator iter = query_map.begin();
-    while (iter != query_map.end()) {
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, "key=%s,value=%s", 
-            iter->first.c_str(), iter->second.c_str());
-        iter++;
+
+    for(; iter != query_map.end(); iter++) {
+        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
+                "[adfront] key=%s, value=%s", 
+                iter->first.c_str(), iter->second.c_str());
     }
 }
 
-// Parse http url string and save q_map, split by =
-int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *const delims)
-{
+
+static int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *delims) {
     char *key = NULL;
     size_t key_len =0;
     char *value = NULL;
     size_t value_len = 0;
     char *p = NULL;
+
     if(NULL != in_buffer){
+        return NGX_OK;
+    }
         char *buffer = (char *)in_buffer;
         //char *buffer = (char*)malloc(strlen(in_buffer) + 1);
         //memcpy(buffer, in_buffer, strlen(in_buffer) + 1);
@@ -292,17 +393,15 @@ int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *const deli
             }
             q_map.insert(make_pair(key, value));
         }
-    }
     return RET_OK;
 }
 
-// Process nginx request string  and save these value into map.
-static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map)
-{
+static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map) {
     string raw_str = string((char*)r->args.data, r->args.len);
 
     string tmp_str;
     string tmp_url_str;
+
     if (0 != UrlDecode(raw_str, tmp_str)) {
         return -1;
     }
@@ -381,14 +480,28 @@ static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map)
     return RET_OK;
 }
 
-ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
+static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
+    size_t n;
+    subrequest_t *st;
     ngx_http_adfront_ctx_t *ctx;
+    ngx_http_post_subrequest_t *psr;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
-    IPluginCtx *plugin_ctx = ctx->plugin_ctx;
+    IPluginCtx *plugin_ctx = (IPluginCtx *)ctx->plugin_ctx;
 
-    for(size_t i = 0; i < plugin_ctx->subrequest_uri_.size(); i++) {
+    /* destroy subrequests created before */
+    if(ctx->subrequests) {
+        ngx_array_destroy(ctx->subrequests);
+    }
+    ctx->subrequests = ngx_array_create(r->pool, 1, sizeof(subrequest_t));
+
+    n = plugin_ctx->subrequest_uri_.size();
+    for(size_t i = 0; i < n; i++) {
         string url = plugin_ctx->subrequest_uri_[i]; 
+
+        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
+                "[adfront] plugin start subrequest %s", url.c_str());
+
         size_t pos = url.find('?'); 
 
         if(pos == string::npos) {
@@ -406,34 +519,34 @@ ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
 
         st = ngx_array_push(ctx->subrequests); 
         if(st == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            return NGX_ERROR;
         }
 
         st->uri.data = ngx_pcalloc(r->pool, uri.len);
-        if(st->uri == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        if(st->uri.data == NULL) {
+            return NGX_ERROR;
         }
         ngx_memcpy(st->uri.data, uri.data, uri.len); 
         st->uri.len = uri.len;
         
         st->args.data = ngx_pcalloc(r->pool, args.len);
-        if(st->uri == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        if(st->args.data == NULL) {
+            return NGX_ERROR;
         }
         ngx_memcpy(st->args.data, args.data, args.len); 
         st->args.len = args.len;
     }
-    
-    size_t n = ctx->subrequests->nelts;
-    subrequest_t *st = ctx->subrequests->elts;
-    ngx_http_post_subrequest_t *psr;
 
+    /* plugin_ctx->subrequest_uri_.clear(); */
+    
+    n = ctx->subrequests->nelts;
+    st = ctx->subrequests->elts;
     for(size_t i = 0; i < n; i++, st++) {
         int flags = NGX_HTTP_SUBREQUEST_IN_MEMORY | NGX_HTTP_SUBREQUEST_WAITED;
 
         psr = ngx_palloc(r->pool, sizeof(ngx_http_post_subrequest_t));
         if(psr == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            return NGX_ERROR;
         }
 
         psr->handler = plugin_subrequest_post_handler;
@@ -457,7 +570,30 @@ plugin_subrequest_post_handler(ngx_http_request_t *r, void *data, ngx_int_t rc) 
     return NGX_OK;
 }
 
+static ngx_int_t plugin_create_ctx(ngx_http_request_t *r) {
+    ngx_http_adfront_ctx_t *ctx;
 
-ngx_int_t plugin_destroy_ctx(ngx_http_regex_t *r) {
-     
+    IPluginCtx *plugin_ctx = new IPluginCtx();
+    if(plugin_ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_header_handler(r, plugin_ctx->headers_in_);
+    ngx_do_get_post_body(r, plugin_ctx->headers_in_);
+    
+    ngx_query_map_print(r, plugin_ctx->headers_in_);
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+    ctx->plugin_ctx = plugin_ctx;
+   
+    return NGX_OK;
+}
+
+static void plugin_destroy_ctx(ngx_http_request_t *r) {
+    ngx_http_adfront_ctx_t *ctx;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+
+    if(ctx->plugin_ctx)
+        delete (IPluginCtx *)ctx->plugin_ctx;
 }

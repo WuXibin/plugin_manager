@@ -140,13 +140,12 @@ static ngx_int_t ngx_http_adfront_handler(ngx_http_request_t *r) {
         /*
          * set by ngx_pcalloc():
          *
+         *  ctx->subrequests = NULL;
          *  ctx->plugin_ctx = NULL;
-         *  ctx->plugin_res = NULL;
          */
 
         ngx_http_set_ctx(r, ctx, ngx_http_adfront_module);
 
-        ctx->subrequests = ngx_array_create(r->pool, 1, sizeof(subrequest_t));
         ctx->state= ADFRONT_STATE_INIT;
         gettimeofday(&ctx->time_start, NULL);
     }
