@@ -1,0 +1,5 @@
+ngx_addon_name=ngx_http_adfront_module
+HTTP_MODULES="$HTTP_MODULES ngx_http_adfront_module"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS  $ngx_addon_dir/ngx_http_adfront_module.c $ngx_addon_dir/ngx_handler_interface.cc $ngx_addon_dir/ngx_handler.cc"
+CORE_INCS="$CORE_INCS $ngx_addon_dir/pluginmanager"
+CORE_LIBS="$CORE_LIBS -L/home/joel/Workspace/nginx-1.6.2/adfront_module/pluginmanager -ldl -lstdc++ -lsharelib -lprotobuf" 
