@@ -68,7 +68,6 @@ private:
 
     PluginInfoPtrMap plugins_info_map_;
     std::string plugin_mananger_conf_;
-
 };
 
 }

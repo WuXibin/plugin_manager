@@ -105,7 +105,7 @@ int PluginManager::LoadPlugins() {
         plugin_info_ptr->conf_map[PLUGIN_MANAGER_CONF] = plugin_mananger_conf_;
 
         cout << "plugin_manager plugin " << PLUGIN_CONF  
-            << " : " << plugin_info_ptr->plugin_ptr << endl;
+            << " : " << plugin_info_ptr->conf_map[PLUGIN_CONF] << endl;
 
         for (int j = 0; j < plugin_info_ptr->plugin_conf.key_val_list_size(); ++j) {
             string key_val = plugin_info_ptr->plugin_conf.key_val_list(j);

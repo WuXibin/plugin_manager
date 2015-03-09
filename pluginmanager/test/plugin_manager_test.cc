@@ -17,12 +17,12 @@ int main() {
     
     IPluginCtx *ctx = new IPluginCtx(); 
 
-    ctx->AddHeadersIn(HTTP_REQUEST_URL, "/deliver?hello world");
+    //ctx->AddHeadersIn(HTTP_REQUEST_URL, "/deliver?hello world");
 
     plugin->Handle(ctx);
 
 
-    cout << "result: " << ctx->handle_result() << endl;
+    cout << "result: " << ctx->handle_result_ << endl;
 
     delete ctx;
 

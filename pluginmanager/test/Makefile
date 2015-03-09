@@ -9,7 +9,7 @@ LDFLAGS =
 TCFLAGS = -W -Wall -Wno-unused-parameter -Werror
 TLDFLAGS = -lsharelib
 
-OBJS = plugin_deliver.o plugin_manager_test.o
+OBJS = plugin_deliver.o
 PROG = libdeliver.so
 
 TOBJS = plugin_manager_test.o

@@ -1,7 +1,8 @@
 #ifndef __PLUGIN_CONFIG_H__
 #define __PLUGIN_CONFIG_H__
 
-#define PLUGIN_DONE     0 
+#define PLUGIN_OK       0 
+#define PLUGIN_ERROR    -1
 #define PLUGIN_AGAIN    0x0F534D42 
 
 #define PLUGIN_MANAGER_CONF             "__plugin_manager_conf__"
@@ -10,6 +11,7 @@
 #define HTTP_REQUEST_POST_BODY          "__post_body__"
 #define HTTP_REQUEST_URL                "__url__"
 #define HTTP_REQUEST_COOKIE             "__cookie__"
+#define HTTP_REQUEST_IP                 "__ip__"
 #define HTTP_REQUEST_METHOD             "__method__"
 #define HTTP_REQUEST_GET_METHOD         "__get__"
 #define HTTP_REQUEST_POST_METHOD        "__post__"
