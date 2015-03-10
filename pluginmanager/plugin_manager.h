@@ -1,7 +1,7 @@
 #ifndef SHARELIB_PLUGINMANANGER_PLUGIN_MANAGER_H_
 #define SHARELIB_PLUGINMANANGER_PLUGIN_MANAGER_H_
 
-#include "iplugin.h"
+#include "plugin.h"
 #include "plugin_config.h"
 #include "plugin_manager.conf.pb.h"
 
@@ -20,7 +20,7 @@ typedef std::map<std::string, PluginInfoPtr> PluginInfoPtrMap;
 
 struct PluginInfo {
     PluginConf  plugin_conf;
-    IPlugin*    plugin_ptr;
+    Plugin*     plugin_ptr;
     STR_MAP     conf_map;
     void*       so_handler;
 
@@ -50,7 +50,7 @@ public:
 
     int Init(const std::string& conf_file);
 
-    IPlugin* GetPlugin(const std::string &plugin_name);
+    Plugin* GetPlugin(const std::string &plugin_name);
 
 private:
     int LoadPlugin(PluginInfoPtr& plugin_info);

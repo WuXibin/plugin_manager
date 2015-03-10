@@ -61,8 +61,9 @@ ngx_module_t  ngx_http_adfront_module = {
     NGX_MODULE_V1_PADDING
 };
 
-/* plugin manager handle */
-void *adfront_handle;
+/* plugin manager handle (Handler *) */
+void *adfront_handle = NULL;
+
 
 static void *ngx_http_adfront_create_loc_conf(ngx_conf_t *cf) {
     ngx_http_adfront_loc_conf_t *conf;
@@ -228,7 +229,7 @@ static ngx_int_t ngx_http_adfront_handler(ngx_http_request_t *r) {
 
 
         ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
-                "[adfront] final request, time consume: %d.%d", ts, tms);
+                "[adfront] final request, time consume: %ds.%dms", ts, tms);
 
         return plugin_final_request(r);
     }

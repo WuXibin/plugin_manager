@@ -17,7 +17,7 @@
 #include <vector>
 #include <map>
 
-#include "pluginmanager/iplugin.h"
+#include "pluginmanager/plugin.h"
 #include "pluginmanager/plugin_config.h"
 #include "pluginmanager/plugin_manager.h"
 
@@ -41,9 +41,9 @@ class Handler {
         void Destroy();
 
         // handle one request
-        int Handle(sharelib::IPluginCtx *ctx);
+        int Handle(sharelib::PluginContext &ctx);
 
-        int PostSubHandle(sharelib::IPluginCtx *ctx);
+        int PostSubHandle(sharelib::PluginContext &ctx);
 
     private:
         sharelib::PluginManager* plugin_manager_;

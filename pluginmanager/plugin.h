@@ -20,7 +20,7 @@ class HandleBaseCtx {
 
 
 //Store plugin centext for every http request
-class IPluginCtx {
+class PluginContext {
     public:
         std::auto_ptr<HandleBaseCtx> handle_ctx_; 
          
@@ -34,24 +34,22 @@ class IPluginCtx {
 };
 
 
-class IPlugin {
+class Plugin {
     public:
-        virtual ~IPlugin() {}
+        virtual ~Plugin() {}
     public:
         virtual int Init(const STR_MAP& config_map) = 0;
 
         virtual int Destroy() = 0;
 
         /*
-         * PLUGIN_DONE      Process request done, this are no subrequests.
-         * PLUGIN_AGAIN     There are subrequest to be processed
+         * PLUGIN_OK        Plugin process request success.
+         * PLUGIN_ERROR     Plugin process request fail.
+         * PLUGIN_AGAIN     Requesst isn't finished, there are subrequests to be processed.
          */
-        virtual int Handle(IPluginCtx *ctx) = 0;
+        virtual int Handle(PluginContext &ctx) = 0;
 
-        virtual int PostSubHandle(IPluginCtx *ctx) { 
-            (void)ctx;      //avoid compiler complain
-            return 0; 
-        }
+        virtual int PostSubHandle(PluginContext &ctx) = 0;
 };
 
 

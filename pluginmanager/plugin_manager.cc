@@ -14,7 +14,7 @@ namespace sharelib {
 const static string kCreatePluginFunc = "create_instance";
 const static string kStringSeparator = "=";
 
-typedef IPlugin *(*CreatePluginFunc)();
+typedef Plugin *(*CreatePluginFunc)();
 
 
 PluginManager::PluginManager() {
@@ -27,6 +27,7 @@ PluginManager::~PluginManager() {
 
 int PluginManager::Init(const string& config_file) {
     string config_str;
+
     if(config_file.empty()) {
         cerr << "plugin_manager config_file empty" << endl;
         return -1;
@@ -44,6 +45,8 @@ int PluginManager::Init(const string& config_file) {
     }
 
     cout << "plugin_manager read " << config_file << " success" << endl;
+
+    plugin_mananger_conf_ = config_file;
 
     return LoadPlugins();
 }
@@ -71,7 +74,7 @@ int PluginManager::LoadPlugin(PluginInfoPtr &plugin_info) {
         return -1;
     }
 
-    IPlugin* plugin = (*handler)();
+    Plugin* plugin = (*handler)();
 
     if (plugin == NULL) {
         dlclose(so_handler);
@@ -128,7 +131,7 @@ int PluginManager::LoadPlugins() {
     return 0;
 }
 
-IPlugin *PluginManager::GetPlugin(const string &queryName) {
+Plugin *PluginManager::GetPlugin(const string &queryName) {
     PluginInfoPtrMap::iterator it = plugins_info_map_.find(queryName);
     if (it == plugins_info_map_.end()) {
         return NULL;

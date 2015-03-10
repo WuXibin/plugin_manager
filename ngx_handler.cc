@@ -38,11 +38,11 @@ int Handler::InitProcess() {
 }
 
 
-int Handler::Handle(IPluginCtx *ctx) {
-    STR_MAP::const_iterator iter = ctx->headers_in_.find(HTTP_REQUEST_PLUGINNAME);
+int Handler::Handle(PluginContext &ctx) {
+    STR_MAP::const_iterator iter = ctx.headers_in_.find(HTTP_REQUEST_PLUGINNAME);
 
-    if (iter != ctx->headers_in_.end()) {
-        IPlugin* plugin = static_cast<IPlugin *>(plugin_manager_->GetPlugin(iter->second));
+    if (iter != ctx.headers_in_.end()) {
+        Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
         if (plugin == NULL) {
             return PLUGIN_ERROR;
         }
@@ -54,11 +54,11 @@ int Handler::Handle(IPluginCtx *ctx) {
 }
 
 
-int Handler::PostSubHandle(IPluginCtx *ctx) {
-    STR_MAP::const_iterator iter = ctx->headers_in_.find(HTTP_REQUEST_PLUGINNAME);
+int Handler::PostSubHandle(PluginContext &ctx) {
+    STR_MAP::const_iterator iter = ctx.headers_in_.find(HTTP_REQUEST_PLUGINNAME);
 
-    if (iter != ctx->headers_in_.end()) {
-        IPlugin* plugin = static_cast<IPlugin *>(plugin_manager_->GetPlugin(iter->second));
+    if (iter != ctx.headers_in_.end()) {
+        Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
         if (plugin == NULL) {
             return PLUGIN_ERROR;
         }
