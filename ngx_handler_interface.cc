@@ -12,6 +12,14 @@ using namespace std;
 using namespace ngx_handler;
 using namespace sharelib;
 
+/*
+ * For historical reason, our nginx may receive url like this:
+ *  /uri?a=1&b=2?&paltform=android 
+ * It will confuse our url parser, so we need to remove "?platform" 
+ * and the characters after that. The macro below is a switcher.
+ */
+#define __URL_COMPAT__  1
+
 static string ngx_http_get_cookie(ngx_http_request_t *r);
 static string ngx_http_get_forward(ngx_http_request_t* r);
 static string ngx_http_get_referer(ngx_http_request_t* r);
@@ -20,7 +28,7 @@ static string ngx_http_get_realip(ngx_http_request_t* r);
 
 static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map);
 static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map);
-static int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *delims);
+static int ngx_url_parser(const string &url, STR_MAP& kv);
 static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map);
 
 static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r);
@@ -392,6 +400,7 @@ plugin_subrequest_post_handler(ngx_http_request_t *r, void *data, ngx_int_t rc) 
 
 
 static ngx_int_t plugin_create_ctx(ngx_http_request_t *r) {
+    ngx_int_t rc;
     ngx_http_adfront_ctx_t *ctx;
 
     PluginContext *plugin_ctx = new PluginContext();
@@ -399,8 +408,15 @@ static ngx_int_t plugin_create_ctx(ngx_http_request_t *r) {
         return NGX_ERROR;
     }
 
-    ngx_header_handler(r, plugin_ctx->headers_in_);
-    ngx_do_get_post_body(r, plugin_ctx->headers_in_);
+    rc = ngx_header_handler(r, plugin_ctx->headers_in_);
+    if(rc != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    rc = ngx_do_get_post_body(r, plugin_ctx->headers_in_); 
+    if(rc != NGX_OK) {
+        return NGX_ERROR;
+    }
     
     ngx_query_map_print(r, plugin_ctx->headers_in_);
 
@@ -474,7 +490,7 @@ static string ngx_http_get_forward(ngx_http_request_t* r) {
 
     for (i = 0; i < n; i++, tb++) { 
         ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0,
-            "Cookie line %d: %V", i, &tb->value);
+            "X-Forwarded-For line %d: %V", i, &tb->value);
     }
     
     if(n > 0) {
@@ -557,98 +573,74 @@ static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map) {
 }
 
 
-static int ngx_url_parser(const char *in_buffer, STR_MAP& q_map, const char *delims) {
-    char *key, *value, *p;
-    size_t key_len, value_len;
+static int ngx_url_parser(const string &url, STR_MAP &kv) {
+    const char *url_cstr = url.c_str();
+    char *beg = (char *)url_cstr, *end = beg + url.length();
+    
+    while(beg < end) {
+        char *delimiter = beg, *equal = beg;
 
-    if(in_buffer == NULL) {
-        return NGX_OK;
-    }
-
-    char *buffer = (char *)in_buffer;
-    for(p = strchr(buffer, '='); p; p = strchr(p, '=')) {
-        if (p == buffer) {
-            ++p;
+        while(delimiter < end && *delimiter != '&') delimiter++;
+        while(equal < delimiter && *equal != '=') equal++;
+        
+        if(equal == beg) {          /* key can't be empty */
+            beg = delimiter + 1;
             continue;
         }
+        string key = string(beg, equal - beg);
 
-        for (key = p-1; isspace(*key); --key);
-        key_len = 0;
-        while (isalnum(*key) || '_' == *key || '\\' == *key || '/' == *key || ':' == *key) {
-            /* don't parse backwards off the start of the string */
-            if (key == buffer) {
-                --key;
-                ++key_len;
-                break;
-            }
-            --key;
-            ++key_len;
-        }
-        ++key;
-        *(buffer + (key - buffer) + key_len) = '\0';
-        for (value = p+1; isspace(*value); ++value);
-        value_len = strcspn(value, delims);
-        p = value + value_len;
-
-        if ('\0' != *p){
-            *(value + value_len) = '\0';
-            p = value + value_len + 1;    
-        }else{
-            p = value + value_len;
+        string val;
+        if((delimiter - equal - 1) > 0) {
+            val = string(equal + 1, delimiter - equal - 1);
+        } else {
+            val = string("");
         }
 
-        q_map.insert(make_pair(key, value));
+        kv.insert(make_pair(key, val));
+
+        beg = delimiter + 1;
     }
 
-    return NGX_OK;
-}
-
+    return 0;
+} 
 
 static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map) {
     string tmp_str;
-    string tmp_url_str;
     string raw_str = string((char*)r->args.data, r->args.len);
 
     tmp_str = UriDecode(raw_str);
     query_map[HTTP_REQUEST_URL] = tmp_str;
 
-    /* delete "?&platform" in uri for historical reason */
-    tmp_url_str = tmp_str;
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+            "[adfront] decode uri %s", tmp_str.c_str());
+
+#if __URL_COMPAT__  
+    /* remove "?&platform" from uri for historical reason */
     string delstr = "?&platform";
-    size_t pos_url = tmp_url_str.find(delstr);
-    ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0, 
-            "before tmp_url_str=%s pos_url=%lu", tmp_url_str.c_str(), pos_url);
+    size_t pos_url = tmp_str.find(delstr);
 
     if (pos_url != string::npos ) {
-        tmp_url_str = tmp_url_str.substr(0, pos_url); 
-        ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0, 
-                "after temp_url_str=%s", tmp_url_str.c_str());
+        tmp_str = tmp_str.substr(0, pos_url); 
     }   
+#endif
 
-    if (ngx_url_parser(tmp_url_str.c_str(), query_map, "&") != NGX_OK) {
-        return NGX_ERROR;
-    }
+    ngx_url_parser(tmp_str, query_map);
 
     /* plugin name */
     tmp_str = string((char*)r->unparsed_uri.data, r->unparsed_uri.len);
-    ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0,
-            "urllen=%lu,url=%s", r->unparsed_uri.len, tmp_str.c_str());
-    size_t pos1 = tmp_str.find_last_of("/"), pos2 = tmp_str.find_first_of("?");
 
-    ngx_log_error(NGX_LOG_DEBUG,  r->connection->log, 0, 
-            "pos1=%lu, pos2=%lu", pos1,pos2);
+    size_t pos = tmp_str.find_first_of('?');
+    string tmp_uri = tmp_str.substr(0, pos);
 
-    if (pos1 != string::npos && pos2 != string::npos && pos2 >pos1) {
-        tmp_str = tmp_str.substr(pos1+1, pos2-pos1-1);
-    } else {
-        if (pos1 != string::npos) {
-            tmp_str = tmp_str.substr(pos1+1);
-        } else if(pos2 != string::npos){
-            tmp_str = tmp_str.substr(0, pos2);
-        } else {
-             
-        }
+    pos = tmp_uri.find_last_of('/');
+    if(pos == string::npos) {
+        ngx_log_error(NGX_LOG_ERR,  r->connection->log, 0,
+                "[adfront] invalid uri %s", tmp_str.c_str());
+
+        return NGX_ERROR;
     }
+
+    tmp_str = tmp_uri.substr(pos + 1);
     query_map[HTTP_REQUEST_PLUGINNAME] = tmp_str;
 
     /* cookie */
