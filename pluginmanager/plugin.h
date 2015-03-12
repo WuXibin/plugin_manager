@@ -12,14 +12,14 @@ namespace sharelib{
 typedef std::map<std::string, std::string> STR_MAP;
 
 
-//Derive this class to define your own handle context
+/* Derive this class to define your own handle context */
 class HandleBaseCtx {
     public:
         virtual ~HandleBaseCtx() {}   
 };
 
 
-//Store plugin centext for every http request
+/* Store plugin centext for every http request */
 class PluginContext {
     public:
         std::auto_ptr<HandleBaseCtx> handle_ctx_; 

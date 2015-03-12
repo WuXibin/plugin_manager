@@ -83,21 +83,9 @@ void plugin_destroy_handler(void *request_handler) {
  *      NGX_OK      GET request;
  *                  POST request with body read completely. 
  *      NGX_AGAIN   POST request and body read incompletely.
- *      NGX_ERROR   plugin create context error;
- *                  POST request read client request body error.
+ *      NGX_ERROR   POST request read client request body error.
  */
 ngx_int_t plugin_init_request(ngx_http_request_t *r) {
-    ngx_int_t rc;
-
-    /* create context for each http request exactly once */
-    rc = plugin_create_ctx(r);
-    if(rc != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
-                "[adfront] plugin create context error");
-
-        return NGX_ERROR;
-    }
-
     if(r->method & (NGX_HTTP_GET | NGX_HTTP_HEAD)) {
         return NGX_OK;
     } 
@@ -121,6 +109,15 @@ ngx_int_t plugin_init_request(ngx_http_request_t *r) {
 ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t *r) {
     ngx_int_t rc;
     ngx_http_adfront_ctx_t *ctx;
+
+    /* create context for each http request exactly once */
+    rc = plugin_create_ctx(r);
+    if(rc != NGX_OK) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] plugin create context error");
+
+        return NGX_ERROR;
+    }
 
     ctx = (ngx_http_adfront_ctx_t *)ngx_http_get_module_ctx(r, ngx_http_adfront_module);
     PluginContext *plugin_ctx = (PluginContext *)ctx->plugin_ctx;
@@ -298,6 +295,9 @@ ngx_int_t plugin_done_request(ngx_http_request_t *r) {
 }
 
 void plugin_destroy_request(ngx_http_request_t *r) {
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
+            "[adfront] destroy request context, count = %d", r->main->count);
+
     plugin_destroy_ctx(r); 
 }
 
@@ -366,7 +366,8 @@ static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
     for(size_t i = 0; i < n; i++, st++) {
         int flags = NGX_HTTP_SUBREQUEST_IN_MEMORY | NGX_HTTP_SUBREQUEST_WAITED;
 
-        psr = (ngx_http_post_subrequest_t *)ngx_palloc(r->pool, sizeof(ngx_http_post_subrequest_t));
+        psr = (ngx_http_post_subrequest_t *)ngx_palloc(r->pool, 
+                sizeof(ngx_http_post_subrequest_t));
         if(psr == NULL) {
             return NGX_ERROR;
         }
@@ -434,6 +435,8 @@ static void plugin_destroy_ctx(ngx_http_request_t *r) {
 
     if(ctx->plugin_ctx)
         delete (PluginContext *)ctx->plugin_ctx;
+
+    ctx->plugin_ctx = NULL;
 }
 
 
@@ -441,12 +444,15 @@ static void plugin_post_body(ngx_http_request_t *r) {
     ngx_http_adfront_ctx_t *ctx;
 
     ctx = (ngx_http_adfront_ctx_t *)ngx_http_get_module_ctx(r, ngx_http_adfront_module);
+
+    /* read whole request body at first time */
     if(ctx->state == ADFRONT_STATE_INIT) {
         ngx_http_finalize_request(r, NGX_DONE);
 
         return;
     }
 
+    /* read request body in multiple times */
     ctx->state = ADFRONT_STATE_PROCESS;
 
     ngx_http_finalize_request(r, r->content_handler(r));
