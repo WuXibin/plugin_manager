@@ -8,7 +8,7 @@ LDFLAGS = -lprotobuf -ldl
 
 OBJS = plugin_manager.o plugin_manager.conf.pb.o
 
-PROG = libsharelib.so
+PROG = libplugin_manager.so
 
 .PHONY: all clean
 

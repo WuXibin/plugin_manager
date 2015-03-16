@@ -1,14 +1,3 @@
-// copyright:
-//            (C) SINA Inc.
-//
-//      file: handler.h
-//      desc: declaration for Hander--the mainly work process
-//    author: kefeng
-//     email: xidianzkf@gmail.com
-//      date: 2013-04-18
-//
-//    change: 
-
 #ifndef ADFRONT_HANDLER_MANAGER_HANDLER_H_
 #define ADFRONT_HANDLER_MANAGER_HANDLER_H_
 
@@ -17,9 +6,9 @@
 #include <vector>
 #include <map>
 
-#include "pluginmanager/plugin.h"
-#include "pluginmanager/plugin_config.h"
-#include "pluginmanager/plugin_manager.h"
+#include <plugin_manager/plugin.h>
+#include <plugin_manager/plugin_config.h>
+#include <plugin_manager/plugin_manager.h>
 
 
 namespace ngx_handler{
