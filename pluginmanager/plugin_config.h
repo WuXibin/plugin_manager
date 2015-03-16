@@ -1,9 +1,11 @@
 #ifndef __PLUGIN_CONFIG_H__
 #define __PLUGIN_CONFIG_H__
 
-#define PLUGIN_OK       0 
-#define PLUGIN_ERROR    -1
-#define PLUGIN_AGAIN    0x0F534D42 
+#define PLUGIN_OK           0 
+#define PLUGIN_ERROR        -1
+#define PLUGIN_AGAIN        -2
+
+#define PLUGIN_NOT_FOUND    -3
 
 #define PLUGIN_MANAGER_CONF             "__plugin_manager_conf__"
 #define PLUGIN_CONF                     "__plugin_conf__"

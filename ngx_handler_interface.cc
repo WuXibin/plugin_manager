@@ -123,6 +123,12 @@ ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t *r) {
     PluginContext *plugin_ctx = (PluginContext *)ctx->plugin_ctx;
 
     rc = ((Handler *)request_handler)->Handle(*plugin_ctx);
+    if(rc == PLUGIN_NOT_FOUND) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                "[adfront] plugin not found, check plugin_manager.conf");
+
+        return NGX_ERROR;
+    }
 
     if(rc == PLUGIN_AGAIN) {
         if(plugin_ctx->subrequest_uri_.empty()) {
@@ -180,6 +186,13 @@ ngx_int_t plugin_check_subrequest(ngx_http_request_t *r) {
 
     st = (subrequest_t *)ctx->subrequests->elts; 
     for(size_t i = 0; i < n; i++, st++) {
+        if(st->subr->upstream == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                    "[adfront] plugin subrequest upstream null, location not found ?");
+
+            return NGX_ERROR;
+        }
+
         b = &st->subr->upstream->buffer; 
 
         string res = string((char *)b->pos, b->last - b->pos); 
@@ -347,9 +360,6 @@ static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
         ngx_memcpy(st->uri.data, uri.c_str(), uri.length()); 
         st->uri.len = uri.length();
 
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
-                "[adfront] plugin subrequest args %s", uri.c_str());
-
         st->args.data = (u_char *)ngx_pcalloc(r->pool, args.length());
         if(st->args.data == NULL) {
             return NGX_ERROR;
@@ -357,8 +367,6 @@ static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
         ngx_memcpy(st->args.data, args.c_str(), args.length()); 
         st->args.len = args.length();
 
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
-                "[adfront] plugin subrequest args %s", args.c_str());
     }
 
     n = ctx->subrequests->nelts;

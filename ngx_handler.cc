@@ -1,5 +1,6 @@
 #include "ngx_handler.h"
 
+#include <assert.h>
 #include <iostream>
 
 using namespace std;
@@ -41,32 +42,28 @@ int Handler::InitProcess() {
 int Handler::Handle(PluginContext &ctx) {
     STR_MAP::const_iterator iter = ctx.headers_in_.find(HTTP_REQUEST_PLUGINNAME);
 
-    if (iter != ctx.headers_in_.end()) {
-        Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
-        if (plugin == NULL) {
-            return PLUGIN_ERROR;
-        }
+    assert(iter != ctx.headers_in_.end());
 
-        return plugin->Handle(ctx);
+    Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
+    if (plugin == NULL) {
+        return PLUGIN_NOT_FOUND;
     }
 
-    return PLUGIN_ERROR;
+    return plugin->Handle(ctx);
 }
 
 
 int Handler::PostSubHandle(PluginContext &ctx) {
     STR_MAP::const_iterator iter = ctx.headers_in_.find(HTTP_REQUEST_PLUGINNAME);
 
-    if (iter != ctx.headers_in_.end()) {
-        Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
-        if (plugin == NULL) {
-            return PLUGIN_ERROR;
-        }
+    assert(iter != ctx.headers_in_.end());
 
-        return plugin->PostSubHandle(ctx);
+    Plugin* plugin = static_cast<Plugin *>(plugin_manager_->GetPlugin(iter->second));
+    if (plugin == NULL) {
+        return PLUGIN_NOT_FOUND;
     }
 
-    return PLUGIN_ERROR;
+    return plugin->PostSubHandle(ctx);
 }
 
 }
