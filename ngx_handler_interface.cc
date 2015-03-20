@@ -131,13 +131,6 @@ ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t *r) {
     }
 
     if(rc == PLUGIN_AGAIN) {
-        if(plugin_ctx->subrequest_uri_.empty()) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "[adfront] plugin return again without subrequest uri");
-            
-            return NGX_ERROR;
-        }
-
         rc = plugin_start_subrequest(r);
         if(rc != NGX_OK) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -160,8 +153,8 @@ ngx_int_t plugin_process_request(void *request_handler, ngx_http_request_t *r) {
  */
 ngx_int_t plugin_check_subrequest(ngx_http_request_t *r) {
     size_t                  n;
-    ngx_buf_t               *b;
     subrequest_t            *st;
+    ngx_http_upstream_t     *up;
     ngx_http_adfront_ctx_t  *ctx;
 
     ctx = (ngx_http_adfront_ctx_t *)ngx_http_get_module_ctx(r, ngx_http_adfront_module);
@@ -181,22 +174,21 @@ ngx_int_t plugin_check_subrequest(ngx_http_request_t *r) {
     ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
             "[adfront] all subrequest done");
 
-    /* clear previous subrequests result */
-    plugin_ctx->subrequest_res_.clear();
-
     st = (subrequest_t *)ctx->subrequests->elts; 
-    for(size_t i = 0; i < n; i++, st++) {
-        if(st->subr->upstream == NULL) {
+    vector<UpstreamRequest>::iterator it = plugin_ctx->upstream_request_.begin();
+    for(size_t i = 0; i < n; i++, st++, it++) {
+        up = st->subr->upstream;
+        if(up == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
                     "[adfront] plugin subrequest upstream null, location not found ?");
 
             return NGX_ERROR;
         }
 
-        b = &st->subr->upstream->buffer; 
-
-        string res = string((char *)b->pos, b->last - b->pos); 
-        plugin_ctx->subrequest_res_.push_back(res); 
+        it->status_ = up->state->status;
+        it->up_sec_ = up->state->response_sec;
+        it->up_msec_ = up->state->response_msec;
+        it->response_ = string((char *)up->buffer.pos, up->buffer.last - up->buffer.pos);  
     }
 
     return NGX_OK;
@@ -219,13 +211,6 @@ ngx_int_t plugin_post_subrequest(void *request_handler, ngx_http_request_t *r) {
     rc = ((Handler *)request_handler)->PostSubHandle(*plugin_ctx);
 
     if(rc == PLUGIN_AGAIN) {
-        if(plugin_ctx->subrequest_uri_.empty()) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "[adfront] plugin return again without subrequest uri");
-            
-            return NGX_ERROR;
-        }
-        
         rc = plugin_start_subrequest(r);
         if(rc != NGX_OK) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -330,42 +315,28 @@ static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r) {
     }
     ctx->subrequests = ngx_array_create(r->pool, 1, sizeof(subrequest_t));
 
-    n = plugin_ctx->subrequest_uri_.size();
+    n = plugin_ctx->upstream_request_.size();
     for(size_t i = 0; i < n; i++) {
-        string url = plugin_ctx->subrequest_uri_[i]; 
-
-        ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
-                "[adfront] plugin start subrequest %s", url.c_str());
-
-        size_t pos = url.find('?'); 
-        string uri, args;
-
-        if(pos != string::npos) {
-            uri = url.substr(0, pos);
-            args = url.substr(pos + 1);
-        } else {
-            uri = url.substr(0, pos);
-            args = "";
-        }
+        UpstreamRequest& ups = plugin_ctx->upstream_request_[i];
         
         st = (subrequest_t *)ngx_array_push(ctx->subrequests); 
         if(st == NULL) {
             return NGX_ERROR;
         }
 
-        st->uri.data = (u_char *)ngx_pcalloc(r->pool, uri.length());
+        st->uri.data = (u_char *)ngx_pcalloc(r->pool, ups.uri_.length());
         if(st->uri.data == NULL) {
             return NGX_ERROR;
         }
-        ngx_memcpy(st->uri.data, uri.c_str(), uri.length()); 
-        st->uri.len = uri.length();
+        ngx_memcpy(st->uri.data, ups.uri_.c_str(), ups.uri_.length()); 
+        st->uri.len = ups.uri_.length();
 
-        st->args.data = (u_char *)ngx_pcalloc(r->pool, args.length());
+        st->args.data = (u_char *)ngx_pcalloc(r->pool, ups.args_.length());
         if(st->args.data == NULL) {
             return NGX_ERROR;
         }
-        ngx_memcpy(st->args.data, args.c_str(), args.length()); 
-        st->args.len = args.length();
+        ngx_memcpy(st->args.data, ups.args_.c_str(), ups.args_.length()); 
+        st->args.len = ups.args_.length();
 
     }
 
@@ -571,17 +542,64 @@ static string ngx_http_get_user_agent(ngx_http_request_t* r) {
 
 
 static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map) {
+    size_t      len = 0;
+    ssize_t     nbytes = 0;
+    u_char      *buf, *last;
+    ngx_chain_t *cl;
+
     if (!(r->method & (NGX_HTTP_POST))) {
         ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0,
-                "[adfront] http get request accepted");
+                "[adfront] http GET/HEAD request accepted");
 
         return NGX_OK;
     }
 
-    
-    /* NGX_HTTP_POST */
-    //TODO
-    query_map[HTTP_REQUEST_BODY] = "";
+    if(r->request_body == NULL || r->request_body->bufs == NULL) {
+        query_map[HTTP_REQUEST_BODY] = "";
+        
+        return NGX_OK; 
+    } 
+
+    for(cl = r->request_body->bufs; cl; cl = cl->next) {
+        if(ngx_buf_in_memory(cl->buf)) {
+            len += cl->buf->last - cl->buf->pos; 
+        } else {
+            len += cl->buf->file_last - cl->buf->file_pos;
+        }
+    } 
+
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
+            "[adfront] post body length: %d", len);
+
+    if(len == 0) {
+        query_map[HTTP_REQUEST_BODY] = "";
+        
+        return NGX_OK; 
+    }
+
+    last = buf = (u_char *)ngx_palloc(r->pool, len);
+    if(buf == NULL) {
+        return NGX_ERROR;
+    }
+
+    for(cl = r->request_body->bufs; cl; cl = cl->next) {
+        if(ngx_buf_in_memory(cl->buf)) {
+            last = ngx_copy(last, cl->buf->pos, cl->buf->last - cl->buf->pos); 
+        } else {
+            nbytes = ngx_read_file(cl->buf->file, last, 
+                    cl->buf->file_last - cl->buf->file_pos, cl->buf->file_pos);
+
+            if(nbytes < 0) {
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                        "[adfront] post body read temp file error"); 
+
+                return NGX_ERROR;
+            } else {
+                last += nbytes; 
+            }
+        }
+    } 
+    query_map[HTTP_REQUEST_BODY] = string((char *)buf, len);
     
     return NGX_OK;
 }
