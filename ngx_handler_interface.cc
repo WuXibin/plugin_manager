@@ -20,6 +20,17 @@ using namespace sharelib;
  */
 #define __URL_COMPAT__  1
 
+string kIsJumpUrl = "is_jumpurl";
+string kJumpUrl = "u";
+
+string kIscookie = "is_cookie";
+string kCookievalue = "pvidlist";
+string kCookiedomain = "cookie_domain";
+string kCookiepath = "cookie_path";
+string kIscookieexpires = "is_cookie_expires";
+string kCookieexpires = "cookie_expires";
+
+
 static string ngx_http_get_cookie(ngx_http_request_t *r);
 static string ngx_http_get_forward(ngx_http_request_t* r);
 static string ngx_http_get_referer(ngx_http_request_t* r);
@@ -30,6 +41,8 @@ static int ngx_header_handler(ngx_http_request_t* r, STR_MAP &query_map);
 static int ngx_do_get_post_body(ngx_http_request_t *r, STR_MAP& query_map);
 static int ngx_url_parser(const string &url, STR_MAP& kv);
 static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map);
+static int ngx_url_jump(ngx_http_request_t* r, const STR_MAP &kv_out);
+static int ngx_write_cookie(ngx_http_request_t* r, const STR_MAP &kv_out);
 
 static ngx_int_t plugin_start_subrequest(ngx_http_request_t *r);
 static ngx_int_t plugin_create_ctx(ngx_http_request_t *r);
@@ -241,6 +254,9 @@ ngx_int_t plugin_final_request(ngx_http_request_t *r) {
 
     ctx = (ngx_http_adfront_ctx_t *)ngx_http_get_module_ctx(r, ngx_http_adfront_module);
     PluginContext *plugin_ctx = (PluginContext *)ctx->plugin_ctx;
+
+    ngx_url_jump(r, plugin_ctx->headers_out_);
+    ngx_write_cookie(r, plugin_ctx->headers_out_);
     
     if(plugin_ctx->handle_result_.empty()) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
@@ -264,6 +280,7 @@ ngx_int_t plugin_final_request(ngx_http_request_t *r) {
     out.buf = b;
     out.next = NULL;
 
+    /* 302 url jump */
     if(r->headers_out.status != NGX_HTTP_MOVED_TEMPORARILY)
        r->headers_out.status = NGX_HTTP_OK; 
 
@@ -723,6 +740,100 @@ static void ngx_query_map_print(ngx_http_request_t* r, const STR_MAP &query_map)
                 "[adfront] key = %s, value = %s", 
                 iter->first.c_str(), iter->second.c_str());
     }
+}
+
+
+static int ngx_url_jump(ngx_http_request_t* r, const STR_MAP &kv_out) {
+    STR_MAP::const_iterator iter;
+    iter = kv_out.find(kIsJumpUrl);
+
+    if(iter == kv_out.end() || iter->second != "1") {
+        return NGX_OK;
+    }
+
+    iter = kv_out.find(kJumpUrl);
+    if(iter == kv_out.end()) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] set url jump without specified jump url");
+
+        return NGX_ERROR;
+    }
+
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
+            "[adfront] write cookies: %s", iter->second.c_str());
+
+    r->headers_out.status = NGX_HTTP_MOVED_TEMPORARILY;
+
+    ngx_table_elt_t* h = (ngx_table_elt_t*)(ngx_list_push(&r->headers_out.headers));
+    if(h == NULL) {
+        return NGX_ERROR;
+    }
+
+    h->hash = 1;
+    h->key.len = sizeof("Location") - 1;
+    h->key.data = (u_char *)"Location";
+
+    h->value.data = (u_char *)ngx_palloc(r->pool, iter->second.length());
+    if(h->value.data == NULL) {
+        return NGX_ERROR;
+    }
+    ngx_memcpy(h->value.data, iter->second.c_str(), iter->second.length());
+    h->value.len = iter->second.size();
+
+    return NGX_OK;
+}
+
+
+static int ngx_write_cookie(ngx_http_request_t* r, const STR_MAP &kv_out) {
+    STR_MAP::const_iterator iter;
+    iter = kv_out.find(kIscookie);
+
+    if(iter == kv_out.end() || iter->second != "1") {
+        return NGX_OK;
+    }
+
+    iter = kv_out.find(kCookievalue);
+    if(iter != kv_out.end()) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+                "[adfront] set write cookies without cookies value");
+
+        return NGX_ERROR;
+    }
+
+    string value = "pvidlist=" + iter->second;
+
+    iter = kv_out.find(kCookiedomain);
+    if(iter != kv_out.end()) value = value + "; domain=" + iter->second;
+
+    iter = kv_out.find(kCookiepath);
+    if(iter != kv_out.end()) value = value + "; path=" + iter->second;
+
+    iter = kv_out.find(kIscookieexpires);
+    if(iter != kv_out.end()){ 
+        iter = kv_out.find(kCookieexpires);
+        if(iter != kv_out.end()) value = value + "; expires=" + iter->second;
+    }
+    
+    ngx_log_error(NGX_LOG_DEBUG, r->connection->log, 0, 
+            "[adfront] write cookies: %s", value.c_str());
+
+    ngx_table_elt_t *cookie = (ngx_table_elt_t*)ngx_list_push(&r->headers_out.headers);
+    if(cookie == NULL) {                           
+        return NGX_ERROR;                               
+    }                                                   
+
+    cookie->hash = 1;
+    cookie->key.len = sizeof("Set-Cookie") - 1;
+    cookie->key.data = (u_char *) "Set-Cookie";
+
+    cookie->value.data = (u_char *)ngx_palloc(r->pool, value.length()); 
+    if(cookie->value.data == NULL) {
+        return NGX_ERROR;
+    }
+    ngx_memcpy(cookie->value.data, value.c_str(), value.length());
+    cookie->value.len = value.length();            
+
+    return NGX_OK;
 }
 
 
