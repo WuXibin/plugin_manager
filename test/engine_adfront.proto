@@ -1,0 +1,235 @@
+package AdEngineFront;
+
+//adFront request message
+message AdFrontRequest {
+    //请求id
+    required string req_id = 1;
+
+    //用户登陆ip
+    optional string ip = 2;
+
+    //user-agent
+    optional string user_agent = 3;
+
+    //user id: pc端为用户cookie    mobile端为设备id
+    optional string user_id = 4;
+
+    //页面数据
+    message PageInfo {
+        //页面id
+        required string page_id = 1;
+        
+        //是否分屏
+        optional bool is_multiple = 2 [default = true];
+
+        //省
+        optional string page_province = 3;
+
+        //市
+        optional string page_city = 4;
+
+        //品牌
+        repeated string page_auto_brand = 5;
+
+        //车系
+        repeated string page_auto_serie = 6;
+
+        //级别
+        repeated string page_auto_level = 7;
+    }
+    optional PageInfo page_info = 5;
+
+    //mobile message
+    message Mobile {
+        //设备平台 android, iphone
+        optional string platform = 1;
+
+        //设备品牌
+        optional string brand = 2;
+
+        //设备型号
+        optional string model = 3;
+
+        //设备系统版本 例如：platform：android  os_version（4.3.1）
+        //则系统版本为 android 4.3.1
+        optional string os_version = 4;
+
+        //连接类型 0 : unknown; 1 : wifi;  2 : 2G; 3 : 3G; 4 :　4G 
+        optional string connection_type = 5;
+
+        //是否为app 默认wap
+        optional bool is_app = 6 [default = false];
+
+        //经度
+        optional int32 latitude = 7;
+
+        //纬度
+        optional int32 longitude = 8;
+
+    }
+    optional Mobile mobile = 6;
+
+    //position memssage
+    message PositionInfo {
+        //广告位id
+        required uint64 position_id = 1;
+
+        //pv id广告位一次请求的唯一id
+        optional string pv_id = 2;
+    }
+    repeated PositionInfo position_info = 7;
+
+    //debug
+    optional bool is_debug = 8 [default = false];
+
+    //carousel_random_id
+    optional uint64 carousel_random_id = 9;
+
+}
+
+
+//adServer response message
+message AdFrontResponse {
+    //请求id
+    required string req_id = 1;
+
+    //cookie 对应的用户属性
+    message UserInfo {
+        //品牌
+        repeated string user_auto_brand = 1;
+
+        //用户车系定向
+        repeated string user_auto_serie = 7;
+
+        //级别(大中小)
+        repeated string user_auto_level = 2;
+
+        //价格
+        repeated string user_auto_price = 3;
+
+        //ip对应的省编码
+        optional string user_province = 4;
+
+        //ip对应的城市编码
+        optional string user_city = 5;
+    }
+    optional UserInfo user_info = 2;
+
+    //广告位对应的广告数据
+    message PositionInfo {
+        //广告位id
+        required uint64 position_id = 1;
+
+        //pv id广告位一次请求的唯一id
+        optional string pv_id = 2;
+
+        //售卖类型cpc cpm cpd
+        repeated string sell_model = 3;
+
+        //创意数据
+        message CreativeInfo {
+            //创意id
+            required uint64 creative_id = 1;
+
+            //展现类型
+            optional string creative_type = 2;
+
+            //创意大小
+            optional string creative_size = 3;
+
+            //创意尺寸
+            optional string width_height = 4;
+
+            //文字链长度
+            optional string word_chain_len = 5;
+
+            //创意售卖类型
+            optional string sell_model = 6;
+
+            //是否内链默认内链
+            optional bool is_internal = 7;
+
+            //订单id
+            optional uint64 order_id = 8;
+
+            //计划id
+            optional uint64 campaign_id = 9;
+
+            //组id
+            optional uint64 group_id = 10;
+
+            //创意定向属性标签
+            message CreativeTarget {
+                //移动端系统平台定向
+                repeated string mobile_platform = 1;
+
+                //移动端网络连接类型定向
+                repeated string mobile_connection_type = 2;
+
+                //页面投放时段定向
+                repeated string page_delivery_hour = 3;
+
+                //页面省级定向
+                repeated string page_province = 4;
+
+                //页面城市定向
+                repeated string page_city = 5;
+
+                //页面品牌定向
+                repeated string page_auto_brand = 6;
+
+                //页面车系定向
+                repeated string page_auto_serie = 7;
+
+                //页面汽车级别定向
+                repeated string page_auto_level = 8;
+
+                //用户汽车车系定向
+                repeated string user_auto_serie = 10;
+
+                //用户汽车级别定向
+                repeated string user_auto_level = 11;
+
+                //用户汽车价格定向
+                repeated string user_auto_price = 12;
+            }
+            optional CreativeTarget creative_target = 11;
+
+            //创意html代码
+            optional string creative_html = 12;
+            
+            //创意ecpm
+            optional float creative_ecpm = 13;
+            
+            //创意预算流量
+            optional uint64 creative_column = 14;
+        }
+        optional CreativeInfo creative_info = 4;
+
+        //请求路径
+        optional string request_path = 5;
+        
+        //rank路径
+        optional string rank_path = 6;
+
+        //ad_label 广告位标签
+        optional string position_label = 7;
+
+        //轮播号id
+        optional uint64 carouselid = 8;
+
+        //algo填充
+        optional string algo_detail = 9;
+
+        //广告位尺寸
+        optional string width_height = 10;
+
+    }
+    repeated PositionInfo position_info = 3;
+
+    //算法路径
+    optional string algorithm_bucket = 4;
+
+    //adServer  处理时间
+    optional int32 processing_time_ms = 5;
+}

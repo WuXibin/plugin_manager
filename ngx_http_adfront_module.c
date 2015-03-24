@@ -13,7 +13,7 @@ static ngx_int_t ngx_http_adfront_handler(ngx_http_request_t *r);
 
 static ngx_command_t  ngx_http_adfront_commands[] = {
 
-    { ngx_string("adfront"),
+    { ngx_string("plugin_manager"),
       NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
       ngx_http_adfront,
       NGX_HTTP_LOC_CONF_OFFSET,
