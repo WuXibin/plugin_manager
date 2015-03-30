@@ -405,6 +405,13 @@ static ngx_int_t plugin_create_ctx(ngx_http_request_t *r) {
         return NGX_ERROR;
     }
 
+    char buf[32];
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    snprintf(buf, 32, "%ld.%06ld", tv.tv_sec, tv.tv_usec);
+    plugin_ctx->time_stamp_ = string(buf + 5, strlen(buf) - 5);
+
     rc = ngx_header_handler(r, plugin_ctx->headers_in_);
     if(rc != NGX_OK) {
         return NGX_ERROR;

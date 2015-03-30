@@ -49,6 +49,8 @@ struct PluginContext {
     std::vector<UpstreamRequest> upstream_request_;                   
 
     std::string handle_result_;     /* hanle's final result as http response */
+
+    std::string time_stamp_;        /* time stamp for log */
 };
 
 
