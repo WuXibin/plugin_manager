@@ -1,7 +1,7 @@
 CC = g++
 
-INC_DIR = 
-LIB_DIR = 
+INC_DIR = -I/home/w/include
+LIB_DIR = -L/home/w/lib64
 
 CFLAGS = -g -shared -fPIC -W -Wall -Wno-unused-parameter -Werror
 LDFLAGS = -lprotobuf -ldl

@@ -13,8 +13,6 @@
 
 namespace ngx_handler{
 
-typedef std::map<std::string, std::string> STR_MAP;
-
 class Handler {
     public:
         Handler();

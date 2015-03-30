@@ -7,6 +7,6 @@ $ngx_addon_dir/ngx_http_adfront_module.c
 $ngx_addon_dir/ngx_handler_interface.cc 
 $ngx_addon_dir/ngx_handler.cc"
 
-CORE_INCS="$CORE_INCS $ngx_addon_dir"
+CORE_INCS="$CORE_INCS $ngx_addon_dir /home/w/include"
 
 CORE_LIBS="$CORE_LIBS -L$ngx_addon_dir/plugin_manager -lplugin_manager -ldl -lstdc++" 
